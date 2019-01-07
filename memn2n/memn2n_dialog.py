@@ -42,7 +42,7 @@ class MemN2NDialog(object):
     """End-To-End Memory Network."""
 
     def __init__(self, batch_size, vocab_size, candidates_size, sentence_size, embedding_size,
-                 candidates_vec, source,
+                 candidates_vec, source, resFlag,
                  hops=3,
                  max_grad_norm=40.0,
                  nonlin=None,
@@ -106,7 +106,6 @@ class MemN2NDialog(object):
         self._build_inputs()
         self._build_vars()
 
-        # print(placeholders)
         # define summary directory
         timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
         self.root_dir = "%s_%s_%s_%s/" % ('task', str(task_id), 'summary_output', timestamp)
@@ -162,6 +161,8 @@ class MemN2NDialog(object):
     def _build_inputs(self):
         self._stories = tf.placeholder(tf.int32, [None, None, self._sentence_size], name="story")
         self._whole_user = tf.placeholder(tf.int32, [None, None, self._sentence_size], name="whole_user")
+        self._results_full = tf.placeholder(tf.int32, [None, None, self._sentence_size], name="results")
+        self._results_null = tf.placeholder(tf.int32, [None], name="results")
         self._whole_system = tf.placeholder(tf.int32, [None, None, self._sentence_size], name="whole_system")
         self._queries = tf.placeholder(tf.int32, [None, self._sentence_size], name="queries")
         self._answers = tf.placeholder(tf.int32, [None], name="answers")
@@ -182,7 +183,7 @@ class MemN2NDialog(object):
             q_emb = tf.nn.embedding_lookup(self.A, queries)
             u_0 = tf.reduce_sum(q_emb, 1)
             u = [u_0]
-            for _ in range(self._hops):
+            for i in range(self._hops):
                 m_emb = tf.nn.embedding_lookup(self.A, stories)
                 m_i = tf.reduce_sum(m_emb, 2)
                 # hack to get around no reduce_dot
@@ -208,36 +209,17 @@ class MemN2NDialog(object):
                     u_k = self._nonlin(u_k)
 
                 u.append(u_k)
-
+                # print("hop number: ", i)
+                # print("information: ", probs)
             candidates_emb = tf.nn.embedding_lookup(self.W, self._candidates)
             candidates_emb_sum = tf.reduce_sum(candidates_emb, 1)
             return tf.matmul(u_k, tf.transpose(candidates_emb_sum))
             # logits=tf.matmul(u_k, self.W)
             # return
             # tf.transpose(tf.sparse_tensor_dense_matmul(self._candidates,tf.transpose(logits)))
-    def _get_features_to_use(self, flag):
-        '''Auxiliary function aimed to provide a list of features that the model uses depending on the settings '''
-
-        #The features to use list contains the required data for the specific setting
-        if self._role_aware:
-            # features_to_use = ['user_story', 'system_story', 'result_story', 'query', 
-                                # 'user_story_tags', 'system_story_tags', 'result_story_tags', 
-                                # 'query_tags', 'answer' ]
-
-        # elif self._role_aware and not self._tag_info:
-            features_to_use = ['user_story', 'system_story', 'result_story', 'query', 'answer' ]
-
-        # elif not self._role_aware and self._tag_info:
-            # features_to_use = ['story', 'query','story_tags', 'query_tags', 'answer' ]
-
-        elif not self._role_aware:
-            features_to_use = ['story','query','answer']
-        else:
-            raise NotImplementedError
-        return features_to_use
 
 
-    def batch_fit(self, story, whole_user, whole_system, query, answer, source):
+    def batch_fit(self, story, whole_user, whole_system, query, answer, results, source, result_flag):
         """Runs the training algorithm over the passed batch
 
         Args:
@@ -249,20 +231,30 @@ class MemN2NDialog(object):
             loss: floating-point number, the loss computed for the batch
         """
         # features_to_use = self._get_features_to_use()
-        # print(stories)
-        # print(queries)
-        # print(answers)
         if source == True:
-            # print('if1: {}'.format(source))
-            feed_dict = {self._whole_user: whole_user, self._whole_system:whole_system, self._queries: query, self._answers: answer}
-            loss, _ = self._sess.run([self.loss_op, self.train_op], feed_dict=feed_dict)
+            # print('whole_user: {}'.format(len(whole_user)))
+            # print('whole_system: {}'.format(len(whole_system)))
+            # print('query: {}'.format(len(query)))
+            # print('answer: {}'.format(len(answer)))
+            if result_flag == True:
+                if results == []:
+                    feed_dict = {self._whole_user: whole_user, self._whole_system:whole_system, self._queries: query, self._answers: answer, 
+                self._results_null:results}
+                else:
+                    feed_dict = {self._whole_user: whole_user, self._whole_system:whole_system, self._queries: query, self._answers: answer, 
+                self._results_full:results}
+                loss, _ = self._sess.run([self.loss_op, self.train_op], feed_dict=feed_dict)
+            else:
+                feed_dict = {self._whole_user: whole_user, self._whole_system:whole_system, self._queries: query, self._answers: answer}
+                loss, _ = self._sess.run([self.loss_op, self.train_op], feed_dict=feed_dict)
         else:
+            # print('hoi')
             # print('else1: {}'.format(feed_dict))
             feed_dict = {self._stories: story, self._queries: query, self._answers: answer}
             loss, _ = self._sess.run([self.loss_op, self.train_op], feed_dict=feed_dict)
         return loss
 
-    def predict(self, story, whole_user, whole_system, query, source):
+    def predict(self, story, whole_user, whole_system, query, results, source, result_flag):
         """Predicts answers as one-hot encoding.
 
         Args:
@@ -273,8 +265,15 @@ class MemN2NDialog(object):
             answers: Tensor (None, vocab_size)
         """
         if source == True:
-            # print('if2: {}'.format(source))
-            feed_dict = {self._whole_user: whole_user, self._whole_system:whole_system, self._queries: query}
+            if result_flag == True: 
+                # print(result_flag)               
+                if results == []:
+                    feed_dict = {self._whole_user: whole_user, self._whole_system:whole_system, self._queries: query, self._results_null:results}
+                else:
+                    feed_dict = {self._whole_user: whole_user, self._whole_system:whole_system, self._queries: query, self._results_full:results}                
+            else:
+                # print("result_flag")
+                feed_dict = {self._whole_user: whole_user, self._whole_system:whole_system, self._queries: query}                
         else:
             # print('else2: {}'.format(source))
             feed_dict = {self._stories: story, self._queries: query}

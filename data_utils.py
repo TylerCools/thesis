@@ -75,19 +75,34 @@ def parse_dialogs_per_response(lines,candid_dic):
     context=[]
     user= None
     system= None
+    system_final = None
+    result = None
     whole_system = []
     whole_user = []
-
+    results = []
+    # print(candid_dic)
     for line in lines:
         line=line.strip()
+        # if ('R_phone' or 'R_cuisine' or 'R_address' or 'R_location' or 'R_number' or 'R_price' or 'R_rating') in tokenize(line):
         if line:
             nid, line = line.split(' ', 1)
             nid = int(nid)
+            # print(nid)
             if '\t' in line:
                 user, system = line.split('\t')
+                # print('system_final: {}'.format(system))
                 answer = candid_dic[system]
-                user = tokenize(user)
+
+                # print('answer: {}'.format(candid_dic[answer]))
                 system = tokenize(system)
+                user = tokenize(user)
+                #     result = tokenize(system)
+                # else:
+                
+                # print('result: {}'.format(result))
+                # print('system: {}'.format(system_final))
+                # print('result: {}'.format(result))
+                # print('user: {}'.format(user))
                 # temporal encoding, and utterance/response encoding
                 # data.append((context[:],u[:],candid_dic[' '.join(r)]))
 
@@ -95,28 +110,37 @@ def parse_dialogs_per_response(lines,candid_dic):
                 user.append('#'+str(nid))
                 system.append('$system')
                 system.append('#'+str(nid))
+                # if result != None:
+                #     result.append('$result')
+                #     result.append('#'+str(nid))
+                #     results.append(result)
+                # print(results)
                 whole_system.append(system)
                 # whole_system.append('$whole_system')
                 whole_user.append(user)
                 context.append(user)
                 context.append(system)
                 # whole_user.append('$whole_user')
-                
-                data.append([context[:], user[:], system, whole_user, whole_system, answer])
-                # print('system: {}\n'.format(system))
+
+                data.append([context[:], user[:], system, whole_user, whole_system, answer, results])
+                # print('results {}\n'.format(results))
                 # print('user: {}\n'.format(user))
                 # print('system whole: {}\n'.format(whole_system))
                 # print('user whole2: {}\n'.format(whole_user))
+                # print(data)
             else:
-                system=tokenize(line)
-                system.append('$system')
-                system.append('#'+str(nid))
-                context.append(system)
+                # print( 'line: {}'.format(line))
+                result=tokenize(line)
+                result.append('$result')
+                result.append('#'+str(nid))
+                context.append(result)
+                results.append(result)
         else:
             whole_system = []
             whole_user = []
             context=[]
-        # print('datalength: {}\n'.format(len(data)))
+            results = []
+        # print('datalength: {}\n'.format(data))
     return data
 
 def get_dialogs(f,candid_dic):
@@ -162,16 +186,18 @@ def vectorize_data(data, word_idx, sentence_size, batch_size, candidates_size, m
     Answer = []
     WholeU = []
     WholeS = []
+    Results = []
+    Story_words = []
     data.sort(key=lambda x:len(x[0]),reverse=True)
-    for i, (story, query, system, whole_user, whole_system, answer) in enumerate(data):
-        # print('story:{}\n'.format(story))
-        # print('query:{}\n'.format(query))
+    for i, (story, query, system, whole_user, whole_system, answer, results) in enumerate(data):
         # print('answer:{}\n'.format(answer))
+        # print('whole_system{}\n'.format(story))
+        # print('results:{}\n'.format(results))
         if i%batch_size==0:
             memory_size=max(1,min(max_memory_size,len(story)))
         
         stor = []
-        for i, sentence in enumerate(system, 1):
+        for i, sentence in enumerate(story, 1):
             ls = max(0, sentence_size - len(sentence))
             stor.append([word_idx[w] if w in word_idx else 0 for w in sentence] + [0] * ls)
         # take only the most recent sentences that fit in memory
@@ -213,10 +239,23 @@ def vectorize_data(data, word_idx, sentence_size, batch_size, candidates_size, m
         # take only the most recent sentences that fit in memory
         ws = ws[::-1][:memory_size][::-1]
 
+
         # pad to memory_size
         lm = max(0, memory_size - len(ws))
         for _ in range(lm):
             ws.append([0] * sentence_size)
+
+        re = []
+        for i, sentence in enumerate(results, 1):
+            ls = max(0, sentence_size - len(sentence))
+            re.append([word_idx[w] if w in word_idx else 0 for w in sentence] + [0] * ls)
+        # take only the most recent sentences that fit in memory
+        re = re[::-1][:memory_size][::-1]
+
+        # pad to memory_size
+        lm = max(0, memory_size - len(re))
+        for _ in range(lm):
+            re.append([0] * sentence_size)
 
         lq = max(0, sentence_size - len(query))
         q = [word_idx[w] if w in word_idx else 0 for w in query] + [0] * lq
@@ -228,4 +267,7 @@ def vectorize_data(data, word_idx, sentence_size, batch_size, candidates_size, m
         Answer.append(np.array(answer))
         WholeU.append(np.array(wu))
         WholeS.append(np.array(ws))
-    return Story, Query, System, Answer, WholeU, WholeS
+        Results.append(np.array(re))
+        Story_words.append(story)
+        # print("whole user in vec data: {}".format(WholeU))
+    return Story, Query, System, Answer, WholeU, WholeS, Results, Story_words
