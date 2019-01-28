@@ -34,7 +34,9 @@ tf.flags.DEFINE_boolean('train', False, 'if True, begin to train')
 tf.flags.DEFINE_boolean('interactive', False, 'if True, interactive')
 tf.flags.DEFINE_boolean('OOV', False, 'if True, use OOV test set')
 tf.flags.DEFINE_boolean('source', False, 'if True, use Source Awareness')
-tf.flags.DEFINE_boolean('resFlag', False, 'if True, use Source Awareness')
+tf.flags.DEFINE_boolean('resFlag', False, 'if True, use Result Source Awareness')
+tf.flags.DEFINE_boolean('mistakes', False, 'if True, use show predicted answers')
+
 FLAGS = tf.flags.FLAGS
 if FLAGS.source == False:
     print('SOURCE FLAG IS FALSE BE CARFULLLLLLLL')
@@ -98,7 +100,8 @@ class chatBot(object):
                                     optimizer=optimizer, 
                                     task_id=task_id,
                                     source=self.source,
-                                    resFlag=self.resFlag) 
+                                    resFlag=self.resFlag,
+                                    oov = self.OOV) 
         self.saver = tf.train.Saver(max_to_keep=50)
         self.summary_writer = tf.summary.FileWriter(self.model.root_dir, self.model.graph_output.graph)
 
@@ -172,9 +175,15 @@ class chatBot(object):
         plt.ylabel('Loss value')
         plt.legend(["train", "val"])
         if FLAGS.source == True:
-            fig.savefig('task_{}_source_{}.png'.format(self.task_id, round(train_acc, 6)))
+            if FLAGS.OOV == True:
+                fig.savefig('task_{}_source_OOV_{}.png'.format(self.task_id, round(train_acc, 6)))
+            else:
+                fig.savefig('task_{}_source_{}.png'.format(self.task_id, round(train_acc, 6)))
         else:
-            fig.savefig('task_{}_regular_{}.png'.format(self.task_id, round(train_acc, 6)))
+            if FLAGS.OOV == True:
+                fig.savefig('task_{}_regular_OOV_{}.png'.format(self.task_id, round(train_acc, 6)))
+            else:
+                fig.savefig('task_{}_regular_{}.png'.format(self.task_id, round(train_acc, 6)))
 
     def plot_acc(self,test_acc):  
         x = []
@@ -185,9 +194,15 @@ class chatBot(object):
         plt.ylabel('Test accuracy')
         plt.legend(["Test"])
         if FLAGS.source == True:
-            fig.savefig('task_{}_source_test_{}.png'.format(self.task_id, round(test_acc[199], 6)))
+            if FLAGS.OOV == True:
+                fig.savefig('task_{}_source_test_OOV_{}.png'.format(self.task_id, round(test_acc[19], 6)))
+            else:
+                fig.savefig('task_{}_source_test_{}.png'.format(self.task_id, round(test_acc[19], 6)))                
         else: 
-            fig.savefig('task_{}_regular_test_{}.png'.format(self.task_id, round(test_acc[199], 6)))
+            if FLAGS.OOV == True:
+                fig.savefig('task_{}_regular_test_OOV_{}.png'.format(self.task_id, round(test_acc[19], 6)))
+            else:
+                fig.savefig('task_{}_regular_test_{}.png'.format(self.task_id, round(test_acc[19], 6)))
 
     def test(self):
 
@@ -246,15 +261,27 @@ class chatBot(object):
             one_answer_mistake = 0
             two_answer_mistakes = 0
             three_or_more_answer_mistakes = 0
-            
+            conversation_number_wrong = []
+            conversation_number_right = []
             # Error inspecting
+            # print(tf.argmax(test_preds))
             for i, answers in enumerate(test_preds):
+                # print(story_words[i])
                 if test_preds[i] != testAnswer[i]:
                     for real, value in self.candid2indx.items():    # for name, age in dictionary.iteritems():  (for Python 2.x)
+                        # print(real)   
+                        # print(value)
+                        # check which written answer corresponds to the given number by testAnswer. 
                         if value == testAnswer[i]:
                             real_answer.append(real)
+                            # print(testAnswer[i])
                             for key2, value in self.candid2indx.items():
                                 if value == test_preds[i]:
+                                    # if i ==2 or i==10 or i==12 or i==24 or i==42 or i==45 or i== 47 or i==53 or i==228 or i ==229:
+                                    #     print('real_answer: {}'.format(real))
+                                    #     print('predicted answer: {}'.format(key2))
+                                    #     print('story: {}'.format(story_words[i]))
+                                    #     print('\n-----------------------')                                 
                                     predicted_answer.append(key2)
                                     if 'where' or  'preference' or 'people' or 'range' in real: 
                                         if 'here' not in real:
@@ -284,12 +311,17 @@ class chatBot(object):
                                             elif mistake == 2:
                                                 two_answer_mistakes += 1
                                             else:
-                                                three_or_more_answer_mistakes += 1                                            
-                                                    # print('predicted answer: {}'.format(key2))
-                                                    # print('real answer: {}'.format(real))
-                                                    # print('story: {}'.format(story_words[i]))
-                                                    # print('\n-----------------------')
-            
+                                                three_or_more_answer_mistakes += 1  
+                            conversation_number_wrong.append(story_words[i][1])   
+                            #     print('predicted answer: {}'.format(key2))
+                            #     print('real answer: {}'.format(real))
+                            # print('predicted answer: {}'.format(key2))
+                            # print('real answer: {}'.format(real))
+                            # print('story: {}'.format(story_words[i]))
+                            # print('\n-----------------------')
+                else:
+                    conversation_number_right.append(story_words[i][1])                                                            
+
             # print('\n-----------------------')
             # print('Wrong follow up: {}'.format(follow_up_wrong))
             # print('One API mistake: {}'.format(one_api_mistake))
@@ -300,12 +332,16 @@ class chatBot(object):
             # print('Three or more wrong suggestons: {}'.format(three_or_more_answer_mistakes))
             # print('-----------------------')
             # print('Wrong:', len(real_answer))
-            # print("Testing Size", n_test)
             # print('-----------------------')
+            # print("Testing Size", n_test)
+            # print('Conversations wrong: {}'.format(conversation_number_wrong))
+            # print('Conversations right: {}'.format(conversation_number_right))
+            # print(conversation_number_right)
+            # print(conversation_number_wrong)
             test_acc = metrics.accuracy_score(test_preds, testAnswer)
             self.test_acc_list.append(test_acc)
-            print("Testing Accuracy:", test_acc)
-        return self.test_acc_list, follow_up_wrong, one_api_mistake, two_api_mistakes, three_or_more_api__call_mistakes, one_answer_mistake, two_answer_mistakes, three_or_more_answer_mistakes
+            # print("Testing Accuracy:", test_acc)
+        return self.test_acc_list, follow_up_wrong, one_api_mistake, two_api_mistakes, three_or_more_api__call_mistakes, one_answer_mistake, two_answer_mistakes, three_or_more_answer_mistakes, conversation_number_right, conversation_number_wrong
 
         
     def train(self):
@@ -354,7 +390,7 @@ class chatBot(object):
             val_preds = self.batch_predict(valStory, valWholeU, valWholeS, valQuery, valResults, n_val)
             train_acc = metrics.accuracy_score(np.array(train_preds), trainAnswer)
             val_acc = metrics.accuracy_score(val_preds, valAnswer)
-            print('-----------------------')
+            # print('-----------------------')
             print('Epoch', t)
             # print('Total Cost Training:', total_cost)
             # print('Total Cost Validation:', total_cost_val)
@@ -375,15 +411,18 @@ class chatBot(object):
             if val_acc > best_validation_accuracy:
                 best_validation_accuracy = val_acc
                 self.saver.save(self.sess, self.model_dir +'model.ckpt', global_step=t)
-            test_acc, follow_up_wrong, one_api_mistake, two_api_mistakes, three_or_more_api__call_mistakes, one_answer_mistake, two_answer_mistakes, three_or_more_answer_mistakes = self.test()
-            # if t % self.evaluation_interval == 0:
-        print(test_acc)
+            test_acc, follow_up_wrong, one_api_mistake, two_api_mistakes, three_or_more_api__call_mistakes, one_answer_mistake, two_answer_mistakes, three_or_more_answer_mistakes, conv_right, conv_wrong = self.test()
+            # print(test_acc)
+        print('Test accuracy list:', test_acc)
+        # print('Conversation wrong list:', conv_wrong)
+        # print('Conversation right list:', conv_right)
+        print('\n-----------------------')        
         print('Total Cost Training:', total_cost)
         print('Total Cost Validation:', total_cost_val)
         print('Training Accuracy:', train_acc)
         print('Validation Accuracy:', val_acc)
-        print('training loss array:', cost_array)
-        print('validation loss array: ', cost_val_array)
+        # print('training loss array:', cost_array)
+        # print('validation loss array: ', cost_val_array)
         print('\n-----------------------')
         print('Wrong follow up: {}'.format(follow_up_wrong))
         print('One API mistake: {}'.format(one_api_mistake))

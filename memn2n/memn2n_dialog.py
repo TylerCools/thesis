@@ -42,7 +42,7 @@ class MemN2NDialog(object):
     """End-To-End Memory Network."""
 
     def __init__(self, batch_size, vocab_size, candidates_size, sentence_size, embedding_size,
-                 candidates_vec, source, resFlag,
+                 candidates_vec, source, resFlag, oov,
                  hops=3,
                  max_grad_norm=40.0,
                  nonlin=None,
@@ -102,7 +102,7 @@ class MemN2NDialog(object):
         self._opt = optimizer
         self._name = name
         self._candidates = candidates_vec
-
+        self._oov = oov
         self._build_inputs()
         self._build_vars()
 
@@ -113,9 +113,9 @@ class MemN2NDialog(object):
         # cross entropy
         # (batch_size, candidates_size)
         if source == True:
-            logits = self._inference(self._whole_system, self._queries)
+            logits = self._inference(self._whole_user, self._whole_system, self._queries, source)
         else:
-            logits = self._inference(self._stories, self._queries)
+            logits = self._inference(self._stories, self._whole_system, self._queries, source)
 
         cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=self._answers, name="cross_entropy")
         cross_entropy_sum = tf.reduce_sum(cross_entropy, name="cross_entropy_sum")
@@ -138,12 +138,13 @@ class MemN2NDialog(object):
             nil_grads_and_vars, name="train_op")
 
         # predict ops
-        predict_op = tf.argmax(logits, 1, name="predict_op")
 
         # answer = softmax(W(o+u))
         predict_proba_op = tf.nn.softmax(logits, name="predict_proba_op")
         predict_log_proba_op = tf.log(predict_proba_op, name="predict_log_proba_op")
 
+
+        predict_op = tf.argmax(logits, 1, name="predict_op")
         # assign ops
         self.loss_op = loss_op
         self.predict_op = predict_op
@@ -178,27 +179,32 @@ class MemN2NDialog(object):
             # self.W = tf.Variable(self._init([self._vocab_size, self._embedding_size]), name="W")
         self._nil_vars = set([self.A.name, self.W.name])
 
-    def _inference(self, stories, queries):
+    def _inference(self, system, user, queries, source):
         with tf.variable_scope(self._name):
             q_emb = tf.nn.embedding_lookup(self.A, queries)
             u_0 = tf.reduce_sum(q_emb, 1)
             u = [u_0]
             for i in range(self._hops):
-                m_emb = tf.nn.embedding_lookup(self.A, stories)
+                m_emb = tf.nn.embedding_lookup(self.A, user)
+                m_emb_2 = tf.nn.embedding_lookup(self.A, system)
                 m_i = tf.reduce_sum(m_emb, 2)
+                m_i_2 = tf.reduce_sum(m_emb_2, 2)
                 # hack to get around no reduce_dot
                 u_trans = tf.transpose(tf.expand_dims(u[-1], -1), [0, 2, 1])
-                dotted = tf.reduce_sum(m_i * u_trans, 2)
-
+                # if self._oov == True:
+                dotted = tf.reduce_sum(m_i * u_trans * m_i_2, 2)
+                # else: 
+                    # dotted = tf.reduce_sum(m_i * u_trans, 2)                    
                 # Calculate probabilities
                 # p = softmax(u_transpose * m_i)
                 probs = tf.nn.softmax(dotted)
 
                 probs_temp = tf.transpose(tf.expand_dims(probs, -1), [0, 2, 1])
                 c_temp = tf.transpose(m_i, [0, 2, 1])
+                c2_temp = tf.transpose(m_i_2, [0, 2, 1])
 
                 # o_k = sum ( p_i * c_i)
-                o_k = tf.reduce_sum(c_temp * probs_temp, 2)
+                o_k = tf.reduce_sum(c_temp * c2_temp * probs_temp, 2)
 
 
                 u_k = tf.matmul(u[-1], self.H) + o_k
@@ -266,7 +272,6 @@ class MemN2NDialog(object):
         """
         if source == True:
             if result_flag == True: 
-                # print(result_flag)               
                 if results == []:
                     feed_dict = {self._whole_user: whole_user, self._whole_system:whole_system, self._queries: query, self._results_null:results}
                 else:
