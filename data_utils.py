@@ -38,6 +38,7 @@ def load_dialog_task(data_dir, task_id, candid_dic, isOOV):
     s = 'dialog-babi-task{}-'.format(task_id)
     train_file = [f for f in files if s in f and 'trn' in f][0]
     if isOOV:
+        print("OOV True")
         test_file = [f for f in files if s in f and 'tst-OOV' in f][0]
     else: 
         test_file = [f for f in files if s in f and 'tst.' in f][0]
@@ -64,12 +65,18 @@ def tokenize(sent):
         result=result[:-1]
     return result
 
+'''
+    This function is adapted to create different dialogue parts according to the theory of Source Awareness.
+'''
 def parse_dialogs_per_response(lines,candid_dic):
     '''
         Parse dialogs provided in the babi tasks format
         The user and system responses are split here. 
         Also the length of the dialog is being monitored
-        with the nid.
+        with the nid. Furthermore the essential part of 
+        Source Awareness is created here. In this function
+        are the dialogues split in a user, system and result 
+        history.
     '''
     data=[]
     context=[]
@@ -80,56 +87,27 @@ def parse_dialogs_per_response(lines,candid_dic):
     whole_system = []
     whole_user = []
     results = []
-    # print(candid_dic)
     for line in lines:
         line=line.strip()
-        # if ('R_phone' or 'R_cuisine' or 'R_address' or 'R_location' or 'R_number' or 'R_price' or 'R_rating') in tokenize(line):
         if line:
             nid, line = line.split(' ', 1)
             nid = int(nid)
-            # print(nid)
             if '\t' in line:
                 user, system = line.split('\t')
-                # print('system_final: {}'.format(system))
                 answer = candid_dic[system]
-
-                # print('answer: {}'.format(candid_dic[answer]))
                 system = tokenize(system)
                 user = tokenize(user)
-                #     result = tokenize(system)
-                # else:
-                
-                # print('result: {}'.format(result))
-                # print('system: {}'.format(system_final))
-                # print('result: {}'.format(result))
-                # print('user: {}'.format(user))
-                # temporal encoding, and utterance/response encoding
-                # data.append((context[:],u[:],candid_dic[' '.join(r)]))
-
                 user.append('$user')
                 user.append('#'+str(nid))
                 system.append('$system')
                 system.append('#'+str(nid))
-                # if result != None:
-                #     result.append('$result')
-                #     result.append('#'+str(nid))
-                #     results.append(result)
-                # print(results)
                 whole_system.append(system)
-                # whole_system.append('$whole_system')
                 whole_user.append(user)
                 context.append(user)
                 context.append(system)
-                # whole_user.append('$whole_user')
 
                 data.append([context[:], user[:], system, whole_user, whole_system, answer, results])
-                # print('results {}\n'.format(results))
-                # print('user: {}\n'.format(user))
-                # print('system whole: {}\n'.format(whole_system))
-                # print('user whole2: {}\n'.format(whole_user))
-                # print(data)
             else:
-                # print( 'line: {}'.format(line))
                 result=tokenize(line)
                 result.append('$result')
                 result.append('#'+str(nid))
@@ -140,7 +118,6 @@ def parse_dialogs_per_response(lines,candid_dic):
             whole_user = []
             context=[]
             results = []
-        # print('datalength: {}\n'.format(data))
     return data
 
 def get_dialogs(f,candid_dic):
@@ -168,7 +145,9 @@ def vectorize_candidates(candidates,word_idx,sentence_size):
         C.append([word_idx[w] if w in word_idx else 0 for w in candidate] + [0] * lc)
     return tf.constant(C,shape=shape)
 
-
+"""
+This function is adapted to vectorize all the dialogue parts correctly. 
+"""
 def vectorize_data(data, word_idx, sentence_size, batch_size, candidates_size, max_memory_size):
     """
     Vectorize stories and queries.
@@ -190,9 +169,11 @@ def vectorize_data(data, word_idx, sentence_size, batch_size, candidates_size, m
     Story_words = []
     data.sort(key=lambda x:len(x[0]),reverse=True)
     for i, (story, query, system, whole_user, whole_system, answer, results) in enumerate(data):
-        # print('answer:{}\n'.format(answer))
-        # print('whole_system{}\n'.format(story))
-        # print('results:{}\n'.format(results))
+        story2 = []
+        story2.append(story)
+        story2.append(i)
+        Story_words.append(story2)
+
         if i%batch_size==0:
             memory_size=max(1,min(max_memory_size,len(story)))
         
@@ -239,7 +220,6 @@ def vectorize_data(data, word_idx, sentence_size, batch_size, candidates_size, m
         # take only the most recent sentences that fit in memory
         ws = ws[::-1][:memory_size][::-1]
 
-
         # pad to memory_size
         lm = max(0, memory_size - len(ws))
         for _ in range(lm):
@@ -268,6 +248,4 @@ def vectorize_data(data, word_idx, sentence_size, batch_size, candidates_size, m
         WholeU.append(np.array(wu))
         WholeS.append(np.array(ws))
         Results.append(np.array(re))
-        Story_words.append(story)
-        # print("whole user in vec data: {}".format(WholeU))
     return Story, Query, System, Answer, WholeU, WholeS, Results, Story_words

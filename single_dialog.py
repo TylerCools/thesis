@@ -1,7 +1,6 @@
 from __future__ import absolute_import
 from __future__ import print_function
 
-import inputs_babi_dialog
 import initialize_embeddings
 
 from data_utils import load_dialog_task, vectorize_data, load_candidates, vectorize_candidates, vectorize_candidates_sparse, tokenize
@@ -23,7 +22,7 @@ tf.flags.DEFINE_float("max_grad_norm", 40.0, "Clip gradients to this norm.")
 tf.flags.DEFINE_integer("evaluation_interval", 10, "Evaluate and print results every x epochs")
 tf.flags.DEFINE_integer("batch_size", 32, "Batch size for training.")
 tf.flags.DEFINE_integer("hops", 3, "Number of hops in the Memory Network.")
-tf.flags.DEFINE_integer("epochs", 200, "Number of epochs to train for.")
+tf.flags.DEFINE_integer("epochs", 4, "Number of epochs to train for.")
 tf.flags.DEFINE_integer("embedding_size", 20, "Embedding size for embedding matrices.")
 tf.flags.DEFINE_integer("memory_size", 50, "Maximum size of memory.")
 tf.flags.DEFINE_integer("task_id", 6, "bAbI task id, 1 <= id <= 6")
@@ -35,26 +34,18 @@ tf.flags.DEFINE_boolean('interactive', False, 'if True, interactive')
 tf.flags.DEFINE_boolean('OOV', False, 'if True, use OOV test set')
 tf.flags.DEFINE_boolean('source', False, 'if True, use Source Awareness')
 tf.flags.DEFINE_boolean('resFlag', False, 'if True, use Result Source Awareness')
-tf.flags.DEFINE_boolean('mistakes', False, 'if True, use show predicted answers')
+tf.flags.DEFINE_boolean('wrong_conversations', False, 'if True, show predicted answers')
+tf.flags.DEFINE_boolean('error', False, 'if True, do error inspecting')
+tf.flags.DEFINE_boolean('acc_each_epoch', False, 'if True, do accuracy each epoch')
+tf.flags.DEFINE_boolean('acc_ten_epoch', False, 'if True, do accuracy every tenth epoch')
+tf.flags.DEFINE_boolean('conv_wrong_right', False, 'if True, give a list of conversations with right answer and wrong answer')
 
 FLAGS = tf.flags.FLAGS
-if FLAGS.source == False:
-    print('SOURCE FLAG IS FALSE BE CARFULLLLLLLL')
-print("Started Task:", FLAGS.task_id)
-
-# METADATA_PER_TASK = {
-#     1: 'dialog-babi-task1-API-calls_metadata.json',
-#     2: 'dialog-babi-task2-API-refine_metadata.json',
-#     3: 'dialog-babi-task3-options_metadata.json',
-#     4: 'dialog-babi-task4-phone-address_metadata.json',
-#     5: 'dialog-babi-task5-full-dialogs_metadata.json',
-#     6: 'dialog-babi-task6-dstc2_metadata.json'
-# }
 
 class chatBot(object):
-    def __init__(self, data_dir, model_dir, task_id, source, resFlag, epochs, isInteractive=True, OOV=False, memory_size=50, 
-        random_state=None, batch_size=32, learning_rate=0.001, epsilon=1e-8, max_grad_norm=40.0, evaluation_interval=10, 
-        hops=3, embedding_size=20):
+    def __init__(self, data_dir, model_dir, task_id, source, resFlag, wrong_conversations, error, acc_each_epoch, acc_ten_epoch, 
+        conv_wrong_right, epochs, isInteractive=True, OOV=False,  memory_size=50, random_state=None, batch_size=32, learning_rate=0.001, 
+        epsilon=1e-8, max_grad_norm=40.0, evaluation_interval=10, hops=3, embedding_size=20):
         self.data_dir = data_dir
         self.task_id = task_id
         self.model_dir = model_dir
@@ -72,8 +63,11 @@ class chatBot(object):
         self.embedding_size = embedding_size
         self.source = source
         self.resFlag = resFlag
+        self.wrong_conversations = wrong_conversations
+        self.error = error
+        self.acc_each_epoch = acc_each_epoch
+        self.acc_ten_epoch = acc_ten_epoch
         candidates, self.candid2indx = load_candidates(self.data_dir, self.task_id)
-        # print(candidates)
         self.n_cand = len(candidates)
         print("Candidate Size", self.n_cand)
         self.indx2candid = dict((self.candid2indx[key], key) for key in self.candid2indx)
@@ -83,7 +77,6 @@ class chatBot(object):
         data = self.trainData + self.testData + self.valData
         self.build_vocab(data, candidates)
 
-        # print(trainData)
         self.test_acc_list = []
         self.candidates_vec = vectorize_candidates(candidates, self.word_idx, self.candidate_sentence_size)
         optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate, epsilon=self.epsilon)
@@ -106,12 +99,6 @@ class chatBot(object):
         self.summary_writer = tf.summary.FileWriter(self.model.root_dir, self.model.graph_output.graph)
 
     def build_vocab(self, data, candidates):
-        # for i in data:
-        #     # print('line: {}\n'.format(i))
-            # print('context: {}\n'.format(i[0]))
-        #     # print('system: {}\n'.format(i[1]))
-        #     print('whole_u: {}\n'.format(i[2]))
-            # print('whole_s: {}\n'.format(i[5]))
         vocab = reduce(lambda x, y: x | y, (set(list(chain.from_iterable(st)) + us) for st, us, sy, w_u, w_s, an, re in data))
         vocab |= reduce(lambda x, y: x | y, (set(candidate)
                                              for candidate in candidates))
@@ -165,6 +152,12 @@ class chatBot(object):
             context.append(r)
             nid += 1  
 
+# Create paths to save the diagrams to
+    def create_path(self, path):
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+# Function created to plot the loss. All the figures are saved to the corresponding subdirectory.
     def plot_loss(self, train, val, train_acc):  
         x = []
         x = list(range(1, len(train)+1))
@@ -176,18 +169,24 @@ class chatBot(object):
         plt.legend(["train", "val"])
         if FLAGS.source == True:
             if FLAGS.OOV == True:
-                fig.savefig('task_{}_source_OOV_{}.png'.format(self.task_id, round(train_acc, 6)))
+                self.create_path('diagrams/loss/source/oov/')
+                fig.savefig('diagrams/loss/source/oov/task_{}_source_OOV_{}.png'.format(self.task_id, round(train_acc, 6)))
             else:
-                fig.savefig('task_{}_source_{}.png'.format(self.task_id, round(train_acc, 6)))
+                self.create_path('diagrams/loss/source/')
+                fig.savefig('diagrams/loss/source/task_{}_source_{}.png'.format(self.task_id, round(train_acc, 6)))
         else:
             if FLAGS.OOV == True:
-                fig.savefig('task_{}_regular_OOV_{}.png'.format(self.task_id, round(train_acc, 6)))
+                self.create_path('diagrams/loss/regular/oov/')
+                fig.savefig('diagrams/loss/regular/oov/task_{}_regular_OOV_{}.png'.format(self.task_id, round(train_acc, 6)))
             else:
-                fig.savefig('task_{}_regular_{}.png'.format(self.task_id, round(train_acc, 6)))
+                self.create_path('diagrams/loss/regular/')
+                fig.savefig('diagrams/loss/regular/task_{}_regular_{}.png'.format(self.task_id, round(train_acc, 6)))
 
-    def plot_acc(self,test_acc):  
+# Function created to plot the accuracy. All the figures are saved to the corresponding subdirectory.
+    def plot_acc(self,test_acc): 
+        length = len(test_acc)
         x = []
-        x = list(range(1, len(test_acc)+1))
+        x = list(range(1, length+1))
         fig = plt.figure()
         plt.plot(x, test_acc)
         plt.xlabel('Epochs')
@@ -195,47 +194,119 @@ class chatBot(object):
         plt.legend(["Test"])
         if FLAGS.source == True:
             if FLAGS.OOV == True:
-                fig.savefig('task_{}_source_test_OOV_{}.png'.format(self.task_id, round(test_acc[19], 6)))
-            else:
-                fig.savefig('task_{}_source_test_{}.png'.format(self.task_id, round(test_acc[19], 6)))                
+                self.create_path('diagrams/accuracy/source/oov/')
+                fig.savefig('diagrams/accuracy/source/oov/task_{}_source_OOV_{}.png'.format(self.task_id, round(test_acc[length-1], 6)))
+            else:                
+                self.create_path('diagrams/accuracy/source/')
+                fig.savefig('diagrams/accuracy/source/task_{}_source_{}.png'.format(self.task_id, round(test_acc[length-1], 6)))                
         else: 
             if FLAGS.OOV == True:
-                fig.savefig('task_{}_regular_test_OOV_{}.png'.format(self.task_id, round(test_acc[19], 6)))
+                self.create_path('diagrams/accuracy/regular/oov/')
+                fig.savefig('diagrams/accuracy/regular/oov/task_{}_regular_OOV_{}.png'.format(self.task_id, round(test_acc[length-1], 6)))
             else:
-                fig.savefig('task_{}_regular_test_{}.png'.format(self.task_id, round(test_acc[19], 6)))
+                self.create_path('diagrams/accuracy/regular/')
+                fig.savefig('diagrams/accuracy/regular/task_{}_regular_{}.png'.format(self.task_id, round(test_acc[length-1], 6)))
+
+    def amount_mistakes(self, real, predicted):
+        real = real.split(' ')
+        predicted = predicted.split(' ')
+        same = 0
+        mistake = 0
+        for i  in range(len(real)):
+            try:
+                if real[i] == predicted[i]:
+                    same += 1
+                else:
+                    mistake += 1
+            except IndexError:
+                return mistake
+        return mistake
+
+    def conv_wrong(self):
+        print('real_answer: {}'.format(real))
+        print('predicted answer: {}'.format(key2))
+        print('story: {}'.format(story_words[i]))
+        print('\n-----------------------')  
+
+    def print_mistake_info(self, fu, oam,    tam, tmam, osm, tsm, tmsm, cw, cr):
+        print('-----------------------')
+        print('Wrong follow up: {}'.format(fu))
+        print('One API mistake: {}'.format(oam))
+        print('Two API mistake: {}'.format(tam))
+        print('Three or more API mistake: {}'.format(tmam))
+        print('One wrong suggeston: {}'.format(osm))
+        print('Two wrong suggestons: {}'.format(tsm))
+        print('Three or more wrong suggestons: {}'.format(tmsm))
+        print('-----------------------')
+        if FLAGS.conv_wrong_right == True:
+            print('Conversations wrong: {}'.format(cw))
+            print('Conversations right: {}'.format(cr))
+
+    def error_inspect(self, test_preds, testAnswer, story_words):
+        real_answer = []
+        predicted_answer = []
+        all_info = []
+        differences_all = []
+        follow_up_wrong = 0
+        bigger_api_mistakes = 0
+        should_be_api = 0
+        three_or_more_api__call_mistakes = 0
+        two_api_mistakes = 0
+        one_api_mistake = 0
+        one_answer_mistake = 0
+        two_answer_mistakes = 0
+        three_or_more_answer_mistakes = 0
+        conversation_number_wrong = []
+        conversation_number_right = []
+        for i, answers in enumerate(test_preds):
+                if test_preds[i] != testAnswer[i]:
+                    for real, value in self.candid2indx.items():   
+                        # check which written answer corresponds to the given number by testAnswer. 
+                        if value == testAnswer[i]:
+                            real_answer.append(real)
+                            for key2, value in self.candid2indx.items():
+                                if value == test_preds[i]:
+                                    if FLAGS.wrong_conversations == True:
+                                        self.conv_wrong()                               
+                                    predicted_answer.append(key2)
+                                    if 'where' or  'preference' or 'people' or 'range' in real: 
+                                        if 'here' not in real:
+                                            if'what' not in real: 
+                                                if 'api_call' not in real: 
+                                                    follow_up_wrong += 1
+                                                else:
+                                                    mistake = self.amount_mistakes(real, key2)
+                                                    if mistake == 1:
+                                                        one_api_mistake += 1
+                                                    elif mistake == 2:
+                                                        two_api_mistakes += 1
+                                                    else:
+                                                        three_or_more_api__call_mistakes += 1
+                                            else:
+                                                mistake = self.amount_mistakes(real, key2)
+                                                if mistake == 1:
+                                                    one_answer_mistake += 1
+                                                elif mistake == 2:
+                                                    two_answer_mistakes += 1
+                                                else:
+                                                    three_or_more_answer_mistakes += 1
+                                        else:
+                                            mistake = self.amount_mistakes(real, key2)
+                                            if mistake == 1:
+                                                    one_answer_mistake += 1
+                                            elif mistake == 2:
+                                                two_answer_mistakes += 1
+                                            else:
+                                                three_or_more_answer_mistakes += 1  
+                            conversation_number_wrong.append(story_words[i][1])   
+                else:
+                    conversation_number_right.append(story_words[i][1])                                                            
+        self.print_mistake_info(follow_up_wrong, one_api_mistake, two_api_mistakes, three_or_more_api__call_mistakes, one_answer_mistake, 
+            two_answer_mistakes, three_or_more_answer_mistakes, conversation_number_right, conversation_number_wrong)
+        return follow_up_wrong, one_api_mistake, two_api_mistakes, three_or_more_api__call_mistakes, one_answer_mistake, \
+        two_answer_mistakes, three_or_more_answer_mistakes, conversation_number_right, conversation_number_wrong
 
     def test(self):
-
-        def amount_mistakes(real, predicted):
-            real = real.split(' ')
-            predicted = predicted.split(' ')
-            same = 0
-            mistake = 0
-            for i  in range(len(real)):
-                try:
-                    if real[i] == predicted[i]:
-                        same += 1
-                    else:
-                        mistake += 1
-                except IndexError:
-                    return mistake
-            return mistake
-
-        def amount_wrong(real, predicted):
-            real = real.split('_')
-            predicted = predicted.split('_')
-            same = 0
-            mistake = 0
-            for i  in range(len(real)):
-                try:
-                    if real[i] == predicted[i]:
-                        same += 1
-                    else:
-                        mistake += 1
-                except IndexError:
-                    return mistake
-            return mistake
-
         ckpt = tf.train.get_checkpoint_state(self.model_dir)
         if ckpt and ckpt.model_checkpoint_path:
             self.saver.restore(self.sess, ckpt.model_checkpoint_path)
@@ -248,102 +319,28 @@ class chatBot(object):
                 self.word_idx, self.sentence_size, self.batch_size, self.n_cand, self.memory_size)
             n_test = len(testStory)
             test_preds = self.batch_predict(testStory, testWholeU, testWholeS, testQuery, testResults, n_test)
-            real_answer = []
-            predicted_answer = []
-            all_info = []
-            differences_all = []
-            follow_up_wrong = 0
-            bigger_api_mistakes = 0
-            should_be_api = 0
-            three_or_more_api__call_mistakes = 0
-            two_api_mistakes = 0
-            one_api_mistake = 0
-            one_answer_mistake = 0
-            two_answer_mistakes = 0
-            three_or_more_answer_mistakes = 0
-            conversation_number_wrong = []
-            conversation_number_right = []
-            # Error inspecting
-            # print(tf.argmax(test_preds))
-            for i, answers in enumerate(test_preds):
-                # print(story_words[i])
-                if test_preds[i] != testAnswer[i]:
-                    for real, value in self.candid2indx.items():    # for name, age in dictionary.iteritems():  (for Python 2.x)
-                        # print(real)   
-                        # print(value)
-                        # check which written answer corresponds to the given number by testAnswer. 
-                        if value == testAnswer[i]:
-                            real_answer.append(real)
-                            # print(testAnswer[i])
-                            for key2, value in self.candid2indx.items():
-                                if value == test_preds[i]:
-                                    # if i ==2 or i==10 or i==12 or i==24 or i==42 or i==45 or i== 47 or i==53 or i==228 or i ==229:
-                                    #     print('real_answer: {}'.format(real))
-                                    #     print('predicted answer: {}'.format(key2))
-                                    #     print('story: {}'.format(story_words[i]))
-                                    #     print('\n-----------------------')                                 
-                                    predicted_answer.append(key2)
-                                    if 'where' or  'preference' or 'people' or 'range' in real: 
-                                        if 'here' not in real:
-                                            if'what' not in real: 
-                                                if 'api_call' not in real: 
-                                                    follow_up_wrong += 1
-                                                else:
-                                                    mistake = amount_mistakes(real, key2)
-                                                    if mistake == 1:
-                                                        one_api_mistake += 1
-                                                    elif mistake == 2:
-                                                        two_api_mistakes += 1
-                                                    else:
-                                                        three_or_more_api__call_mistakes += 1
-                                            else:
-                                                mistake = amount_wrong(real, key2)
-                                                if mistake == 1:
-                                                    one_answer_mistake += 1
-                                                elif mistake == 2:
-                                                    two_answer_mistakes += 1
-                                                else:
-                                                    three_or_more_answer_mistakes += 1
-                                        else:
-                                            mistake = amount_wrong(real, key2)
-                                            if mistake == 1:
-                                                    one_answer_mistake += 1
-                                            elif mistake == 2:
-                                                two_answer_mistakes += 1
-                                            else:
-                                                three_or_more_answer_mistakes += 1  
-                            conversation_number_wrong.append(story_words[i][1])   
-                            #     print('predicted answer: {}'.format(key2))
-                            #     print('real answer: {}'.format(real))
-                            # print('predicted answer: {}'.format(key2))
-                            # print('real answer: {}'.format(real))
-                            # print('story: {}'.format(story_words[i]))
-                            # print('\n-----------------------')
-                else:
-                    conversation_number_right.append(story_words[i][1])                                                            
 
-            # print('\n-----------------------')
-            # print('Wrong follow up: {}'.format(follow_up_wrong))
-            # print('One API mistake: {}'.format(one_api_mistake))
-            # print('Two API mistake: {}'.format(two_api_mistakes))
-            # print('Three or more API mistake: {}'.format(three_or_more_api__call_mistakes))
-            # print('One wrong suggeston: {}'.format(one_answer_mistake))
-            # print('Two wrong suggestons: {}'.format(two_answer_mistakes))
-            # print('Three or more wrong suggestons: {}'.format(three_or_more_answer_mistakes))
-            # print('-----------------------')
-            # print('Wrong:', len(real_answer))
-            # print('-----------------------')
-            # print("Testing Size", n_test)
-            # print('Conversations wrong: {}'.format(conversation_number_wrong))
-            # print('Conversations right: {}'.format(conversation_number_right))
-            # print(conversation_number_right)
-            # print(conversation_number_wrong)
+            # Error inspecting
+            if FLAGS.error == True:
+                follow_up_wrong, one_api_mistake, two_api_mistakes, three_or_more_api__call_mistakes, one_answer_mistake, two_answer_mistakes, three_or_more_answer_mistakes, conversation_number_right, conversation_number_wrong = self.error_inspect(test_preds, testAnswer, story_words)
+            
             test_acc = metrics.accuracy_score(test_preds, testAnswer)
             self.test_acc_list.append(test_acc)
-            # print("Testing Accuracy:", test_acc)
-        return self.test_acc_list, follow_up_wrong, one_api_mistake, two_api_mistakes, three_or_more_api__call_mistakes, one_answer_mistake, two_answer_mistakes, three_or_more_answer_mistakes, conversation_number_right, conversation_number_wrong
+            print("Testing Accuracy:", test_acc)
+            print('----------------------\n')  
+        return self.test_acc_list, follow_up_wrong, one_api_mistake, two_api_mistakes, three_or_more_api__call_mistakes, \
+        one_answer_mistake, two_answer_mistakes, three_or_more_answer_mistakes, conversation_number_right, conversation_number_wrong
 
-        
+    def print_epoch_info(self, total_cost, total_cost_val, train_acc, val_acc, test_acc):
+        print('Total Cost Training:', total_cost)
+        print('Total Cost Validation:', total_cost_val)
+        print('Training Accuracy:', train_acc)
+        print('Validation Accuracy:', val_acc)
+        print('\n-----------------------')  
+        print("Testing Size", n_test)
+        print('Test accuracy list:', test_acc)
+        print('\n-----------------------')  
+
     def train(self):
         trainStory, trainQuery, trainSystem, trainAnswer, trainWholeU, trainWholeS, trainResults, _ = vectorize_data(self.trainData, 
             self.word_idx, self.sentence_size, self.batch_size, self.n_cand, self.memory_size)
@@ -351,7 +348,6 @@ class chatBot(object):
             self.word_idx, self.sentence_size, self.batch_size, self.n_cand, self.memory_size)
         n_train = len(trainStory)
         n_val = len(valStory)
-        print(len(valWholeU))
         print("Training Size", n_train)
         print("Validation Size", n_val)
         tf.set_random_seed(self.random_state)
@@ -363,23 +359,17 @@ class chatBot(object):
         cost_array = []
         cost_val_array = []
         for t in range(1, self.epochs + 1):
-            # print('Epoch', t)
+            print('Epoch', t)
             np.random.shuffle(batches_train)
             np.random.shuffle(batches_val)
             total_cost = 0.0
             total_cost_val = 0.0
-            # print('result flag', FLAGS.resFlag)
-            # print('Source flag', FLAGS.source)
+            # Get the right batches to feed the network to calculate the trainingloss
             for start_t, end_t in batches_train:
-                story = trainStory[start_t:end_t]
-                query = trainQuery[start_t:end_t]
-                system = trainSystem[start_t:end_t]
-                answer = trainAnswer[start_t:end_t]
-                whole_u = trainWholeU[start_t:end_t]
-                whole_s = trainWholeS[start_t:end_t]
-                results = trainResults[start_t:end_t]
-                cost_t = self.model.batch_fit(story, whole_u, whole_s, query, answer, results, FLAGS.source, FLAGS.resFlag)
+                cost_t = self.model.batch_fit(trainStory[start_t:end_t], trainWholeU[start_t:end_t], trainWholeS[start_t:end_t], 
+                    trainQuery[start_t:end_t], trainAnswer[start_t:end_t], trainResults[start_t:end_t], FLAGS.source, FLAGS.resFlag)
                 total_cost += cost_t
+            # Get the right batches to feed the network to calculate the validation loss
             for start_v, end_v in batches_val:
                 cost_t_val = self.model.batch_fit(valStory[start_v:end_v], valWholeU[start_v:end_v], valWholeS[start_v:end_v], 
                     valQuery[start_v:end_v], valAnswer[start_v:end_v], valResults[start_v:end_v], FLAGS.source, FLAGS.resFlag)
@@ -390,17 +380,6 @@ class chatBot(object):
             val_preds = self.batch_predict(valStory, valWholeU, valWholeS, valQuery, valResults, n_val)
             train_acc = metrics.accuracy_score(np.array(train_preds), trainAnswer)
             val_acc = metrics.accuracy_score(val_preds, valAnswer)
-            # print('-----------------------')
-            print('Epoch', t)
-            # print('Total Cost Training:', total_cost)
-            # print('Total Cost Validation:', total_cost_val)
-            # print('Training Accuracy:', train_acc)
-            # print('Validation Accuracy:', val_acc)
-            # print('training loss array:', cost_array)
-            # print('validation loss array: ', cost_val_array)
-            # print('-----------------------')
-
-                # write summary
             train_acc_summary = tf.summary.scalar('task_' + str(self.task_id) + '/' + 'train_acc', tf.constant((train_acc), dtype=tf.float32))
             val_acc_summary = tf.summary.scalar('task_' + str(self.task_id) + '/' + 'val_acc', tf.constant((val_acc), dtype=tf.float32))
             merged_summary = tf.summary.merge([train_acc_summary, val_acc_summary])
@@ -411,28 +390,18 @@ class chatBot(object):
             if val_acc > best_validation_accuracy:
                 best_validation_accuracy = val_acc
                 self.saver.save(self.sess, self.model_dir +'model.ckpt', global_step=t)
-            test_acc, follow_up_wrong, one_api_mistake, two_api_mistakes, three_or_more_api__call_mistakes, one_answer_mistake, two_answer_mistakes, three_or_more_answer_mistakes, conv_right, conv_wrong = self.test()
-            # print(test_acc)
-        print('Test accuracy list:', test_acc)
-        # print('Conversation wrong list:', conv_wrong)
-        # print('Conversation right list:', conv_right)
-        print('\n-----------------------')        
-        print('Total Cost Training:', total_cost)
-        print('Total Cost Validation:', total_cost_val)
-        print('Training Accuracy:', train_acc)
-        print('Validation Accuracy:', val_acc)
-        # print('training loss array:', cost_array)
-        # print('validation loss array: ', cost_val_array)
-        print('\n-----------------------')
-        print('Wrong follow up: {}'.format(follow_up_wrong))
-        print('One API mistake: {}'.format(one_api_mistake))
-        print('Two API mistake: {}'.format(two_api_mistakes))
-        print('Three or more API mistake: {}'.format(three_or_more_api__call_mistakes))
-        print('One wrong suggeston: {}'.format(one_answer_mistake))
-        print('Two wrong suggestons: {}'.format(two_answer_mistakes))
-        print('Three or more wrong suggestons: {}'.format(three_or_more_answer_mistakes))
-        print('-----------------------')
-        self.plot_acc(test_acc)
+            if FLAGS.acc_each_epoch == True:
+                test_acc, follow_up_wrong, one_api_mistake, two_api_mistakes, three_or_more_api__call_mistakes, 
+                one_answer_mistake, two_answer_mistakes, three_or_more_answer_mistakes, conv_right, conv_wrong = self.test()
+                if t % self.evaluation_interval == 0:
+                    self.print_epoch_info(total_cost, total_cost_val, train_acc, val_acc, test_acc)      
+            elif FLAGS.acc_ten_epoch:
+                if t % self.evaluation_interval == 0:
+                    test_acc, follow_up_wrong, one_api_mistake, two_api_mistakes, three_or_more_api__call_mistakes, 
+                    one_answer_mistake, two_answer_mistakes, three_or_more_answer_mistakes, conv_right, conv_wrong = self.test()
+                    self.print_epoch_info(total_cost, total_cost_val, train_acc, val_acc, test_acc)  
+        if FLAGS.acc_each_epoch == True or FLAGS.acc_ten_epoch == True:
+            self.plot_acc(test_acc)
         self.plot_loss(cost_array, cost_val_array, train_acc)
 
 
@@ -460,7 +429,8 @@ if __name__ == '__main__':
         os.makedirs(model_dir)
     chatbot = chatBot(FLAGS.data_dir, model_dir, FLAGS.task_id, OOV=FLAGS.OOV,
                       isInteractive=FLAGS.interactive, batch_size=FLAGS.batch_size, source=FLAGS.source, epochs=FLAGS.epochs, 
-                      resFlag=FLAGS.resFlag)
+                      resFlag=FLAGS.resFlag, wrong_conversations=FLAGS.wrong_conversations, error=FLAGS.error, 
+                      acc_each_epoch=FLAGS.acc_each_epoch, acc_ten_epoch=FLAGS.acc_ten_epoch, conv_wrong_right=FLAGS.conv_wrong_right)
     # chatbot.run()
     if FLAGS.train == True:
         chatbot.train()

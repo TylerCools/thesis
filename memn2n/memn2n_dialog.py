@@ -112,6 +112,7 @@ class MemN2NDialog(object):
 
         # cross entropy
         # (batch_size, candidates_size)
+        # If Source Awareness is used, other parts of the dialogue ar passed to the inference function.
         if source == True:
             logits = self._inference(self._whole_user, self._whole_system, self._queries, source)
         else:
@@ -137,17 +138,18 @@ class MemN2NDialog(object):
         train_op = self._opt.apply_gradients(
             nil_grads_and_vars, name="train_op")
 
-        # predict ops
 
-        # answer = softmax(W(o+u))
+        # predicted answer = softmax(W(o+u))
         predict_proba_op = tf.nn.softmax(logits, name="predict_proba_op")
         predict_log_proba_op = tf.log(predict_proba_op, name="predict_log_proba_op")
 
-
-        predict_op = tf.argmax(logits, 1, name="predict_op")
+        # Choose the maximum of the softmax. This is the predicted answer.
+        # This is adapted to get the same formulas as in the MemN2N paper.
+        predicted_ans = tf.argmax(predict_log_proba_op, 1, name="predicted_ans")
+        
         # assign ops
         self.loss_op = loss_op
-        self.predict_op = predict_op
+        self.predicted_ans = predicted_ans
         self.predict_proba_op = predict_proba_op
         self.predict_log_proba_op = predict_log_proba_op
         self.train_op = train_op
@@ -158,8 +160,9 @@ class MemN2NDialog(object):
         self._sess = session
         self._sess.run(init_op)
 
-# ????
+
     def _build_inputs(self):
+        # A function to create the placeholders. 
         self._stories = tf.placeholder(tf.int32, [None, None, self._sentence_size], name="story")
         self._whole_user = tf.placeholder(tf.int32, [None, None, self._sentence_size], name="whole_user")
         self._results_full = tf.placeholder(tf.int32, [None, None, self._sentence_size], name="results")
@@ -176,9 +179,9 @@ class MemN2NDialog(object):
             self.H = tf.Variable(self._init([self._embedding_size, self._embedding_size]), name="H")
             W = tf.concat([nil_word_slot, self._init([self._vocab_size - 1, self._embedding_size])], 0)
             self.W = tf.Variable(W, name="W")
-            # self.W = tf.Variable(self._init([self._vocab_size, self._embedding_size]), name="W")
         self._nil_vars = set([self.A.name, self.W.name])
 
+    # This function is adapted to be able to handle Source Awareness
     def _inference(self, system, user, queries, source):
         with tf.variable_scope(self._name):
             q_emb = tf.nn.embedding_lookup(self.A, queries)
@@ -191,10 +194,11 @@ class MemN2NDialog(object):
                 m_i_2 = tf.reduce_sum(m_emb_2, 2)
                 # hack to get around no reduce_dot
                 u_trans = tf.transpose(tf.expand_dims(u[-1], -1), [0, 2, 1])
-                # if self._oov == True:
-                dotted = tf.reduce_sum(m_i * u_trans * m_i_2, 2)
-                # else: 
-                    # dotted = tf.reduce_sum(m_i * u_trans, 2)                    
+                if source == True:
+                    dotted = tf.reduce_sum(m_i * u_trans * m_i_2, 2)
+                else: 
+                    dotted = tf.reduce_sum(m_i * u_trans, 2)                    
+                
                 # Calculate probabilities
                 # p = softmax(u_transpose * m_i)
                 probs = tf.nn.softmax(dotted)
@@ -204,8 +208,10 @@ class MemN2NDialog(object):
                 c2_temp = tf.transpose(m_i_2, [0, 2, 1])
 
                 # o_k = sum ( p_i * c_i)
-                o_k = tf.reduce_sum(c_temp * c2_temp * probs_temp, 2)
-
+                if source == True:
+                    o_k = tf.reduce_sum(c_temp * c2_temp * probs_temp, 2)
+                else:
+                    o_k = tf.reduce_sum(c_temp * probs_temp, 2)
 
                 u_k = tf.matmul(u[-1], self.H) + o_k
                 # u_k=u[-1]+tf.matmul(o_k,self.H)
@@ -215,33 +221,22 @@ class MemN2NDialog(object):
                     u_k = self._nonlin(u_k)
 
                 u.append(u_k)
-                # print("hop number: ", i)
-                # print("information: ", probs)
             candidates_emb = tf.nn.embedding_lookup(self.W, self._candidates)
             candidates_emb_sum = tf.reduce_sum(candidates_emb, 1)
             return tf.matmul(u_k, tf.transpose(candidates_emb_sum))
-            # logits=tf.matmul(u_k, self.W)
-            # return
-            # tf.transpose(tf.sparse_tensor_dense_matmul(self._candidates,tf.transpose(logits)))
-
-
+          
+    # This function is adapted to be able to handle Source Awareness
     def batch_fit(self, story, whole_user, whole_system, query, answer, results, source, result_flag):
         """Runs the training algorithm over the passed batch
-
-        Args:
-            stories: Tensor (None, memory_size, sentence_size)
-            queries: Tensor (None, sentence_size)
-            answers: Tensor (None, vocab_size)
+        
+        Input:
+            Takes as input both the full dialogue and the dialogue split according to the Source Awareness model
 
         Returns:
             loss: floating-point number, the loss computed for the batch
         """
         # features_to_use = self._get_features_to_use()
         if source == True:
-            # print('whole_user: {}'.format(len(whole_user)))
-            # print('whole_system: {}'.format(len(whole_system)))
-            # print('query: {}'.format(len(query)))
-            # print('answer: {}'.format(len(answer)))
             if result_flag == True:
                 if results == []:
                     feed_dict = {self._whole_user: whole_user, self._whole_system:whole_system, self._queries: query, self._answers: answer, 
@@ -254,8 +249,6 @@ class MemN2NDialog(object):
                 feed_dict = {self._whole_user: whole_user, self._whole_system:whole_system, self._queries: query, self._answers: answer}
                 loss, _ = self._sess.run([self.loss_op, self.train_op], feed_dict=feed_dict)
         else:
-            # print('hoi')
-            # print('else1: {}'.format(feed_dict))
             feed_dict = {self._stories: story, self._queries: query, self._answers: answer}
             loss, _ = self._sess.run([self.loss_op, self.train_op], feed_dict=feed_dict)
         return loss
@@ -263,9 +256,8 @@ class MemN2NDialog(object):
     def predict(self, story, whole_user, whole_system, query, results, source, result_flag):
         """Predicts answers as one-hot encoding.
 
-        Args:
-            stories: Tensor (None, memory_size, sentence_size)
-            queries: Tensor (None, sentence_size)
+        Input:
+            Takes as input both the full dialogue and the dialogue split according to the Source Awareness model. 
 
         Returns:
             answers: Tensor (None, vocab_size)
@@ -283,4 +275,4 @@ class MemN2NDialog(object):
             # print('else2: {}'.format(source))
             feed_dict = {self._stories: story, self._queries: query}
 
-        return self._sess.run(self.predict_op, feed_dict=feed_dict)
+        return self._sess.run(self.predicted_ans, feed_dict=feed_dict)
