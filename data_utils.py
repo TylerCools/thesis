@@ -8,7 +8,7 @@ import tensorflow as tf
 stop_words=set(["a","an","the"])
 
 
-def load_candidates(data_dir, task_id):
+def load_candidates(data_dir, task_id):  
     assert task_id > 0 and task_id < 7
     candidates=[]
     candidates_f=None
@@ -22,7 +22,6 @@ def load_candidates(data_dir, task_id):
             candid_dic[line.strip().split(' ',1)[1]] = i
             line=tokenize(line.strip())[1:]
             candidates.append(line)
-    # return candidates,dict((' '.join(cand),i) for i,cand in enumerate(candidates))
     return candidates,candid_dic
 
 
@@ -46,7 +45,6 @@ def load_dialog_task(data_dir, task_id, candid_dic, isOOV):
     train_data = get_dialogs(train_file,candid_dic)
     test_data = get_dialogs(test_file,candid_dic)
     val_data = get_dialogs(val_file,candid_dic)
-    # print(train_data)
     return train_data, test_data, val_data
 
 
@@ -105,7 +103,6 @@ def parse_dialogs_per_response(lines,candid_dic):
                 whole_user.append(user)
                 context.append(user)
                 context.append(system)
-
                 data.append([context[:], user[:], system, whole_user, whole_system, answer, results])
             else:
                 result=tokenize(line)

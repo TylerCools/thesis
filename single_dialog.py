@@ -1,10 +1,7 @@
 from __future__ import absolute_import
 from __future__ import print_function
 
-import initialize_embeddings
-
 from data_utils import load_dialog_task, vectorize_data, load_candidates, vectorize_candidates, vectorize_candidates_sparse, tokenize
-# from plot import plot_loss as plot
 from sklearn import metrics
 from memn2n import MemN2NDialog
 from itertools import chain
@@ -16,13 +13,14 @@ import os
 import json
 from matplotlib import pyplot as plt
 
+# Define all flags with their description
 tf.flags.DEFINE_float("learning_rate", 0.001, "Learning rate for Adam Optimizer.")
 tf.flags.DEFINE_float("epsilon", 1e-8, "Epsilon value for Adam Optimizer.")
 tf.flags.DEFINE_float("max_grad_norm", 40.0, "Clip gradients to this norm.")
 tf.flags.DEFINE_integer("evaluation_interval", 10, "Evaluate and print results every x epochs")
 tf.flags.DEFINE_integer("batch_size", 32, "Batch size for training.")
 tf.flags.DEFINE_integer("hops", 3, "Number of hops in the Memory Network.")
-tf.flags.DEFINE_integer("epochs", 4, "Number of epochs to train for.")
+tf.flags.DEFINE_integer("epochs", 200, "Number of epochs to train for.")
 tf.flags.DEFINE_integer("embedding_size", 20, "Embedding size for embedding matrices.")
 tf.flags.DEFINE_integer("memory_size", 50, "Maximum size of memory.")
 tf.flags.DEFINE_integer("task_id", 6, "bAbI task id, 1 <= id <= 6")
@@ -30,7 +28,6 @@ tf.flags.DEFINE_integer("random_state", None, "Random state.")
 tf.flags.DEFINE_string("data_dir", "data/dialog-bAbI-tasks/", "Directory containing bAbI tasks")
 tf.flags.DEFINE_string("model_dir", "model/", "Directory containing memn2n model checkpoints")
 tf.flags.DEFINE_boolean('train', False, 'if True, begin to train')
-tf.flags.DEFINE_boolean('interactive', False, 'if True, interactive')
 tf.flags.DEFINE_boolean('OOV', False, 'if True, use OOV test set')
 tf.flags.DEFINE_boolean('source', False, 'if True, use Source Awareness')
 tf.flags.DEFINE_boolean('resFlag', False, 'if True, use Result Source Awareness')
@@ -72,7 +69,7 @@ class chatBot(object):
         print("Candidate Size", self.n_cand)
         self.indx2candid = dict((self.candid2indx[key], key) for key in self.candid2indx)
 
-        # task data
+        # create train, test and validation data
         self.trainData, self.testData, self.valData = load_dialog_task(self.data_dir, self.task_id, self.candid2indx, self.OOV)
         data = self.trainData + self.testData + self.valData
         self.build_vocab(data, candidates)
@@ -122,42 +119,12 @@ class chatBot(object):
         print("Average story length", mean_story_size)
 
 
-    def interactive(self):
-        context = []
-        u = None
-        r = None
-        nid = 1
-        while True:
-            line = input('--> ').strip().lower()
-            if line == 'exit':
-                break
-            if line == 'restart':
-                context = []
-                nid = 1
-                print("clear memory")
-                continue
-            u = tokenize(line)
-            data = [(context, u, -1)]
-            story, query, system, answer, wholeU, wholeS = vectorize_data(
-                data, self.word_idx, self.sentence_size, self.batch_size, self.n_cand, self.memory_size)
-            preds = self.model.predict(story, wholeU, wholeS, q, self.source, self.resFlag)
-            r = self.indx2candid[preds[0]]
-            # print(r)
-            r = tokenize(r)
-            u.append('$u')
-            u.append('#' + str(nid))
-            r.append('$r')
-            r.append('#' + str(nid))
-            context.append(u)
-            context.append(r)
-            nid += 1  
-
-# Create paths to save the diagrams to
+    # Create paths to save the diagrams to
     def create_path(self, path):
         if not os.path.exists(path):
             os.makedirs(path)
 
-# Function created to plot the loss. All the figures are saved to the corresponding subdirectory.
+    # Function created to plot the loss. All the figures are saved to the corresponding subdirectory.
     def plot_loss(self, train, val, train_acc):  
         x = []
         x = list(range(1, len(train)+1))
@@ -182,7 +149,7 @@ class chatBot(object):
                 self.create_path('diagrams/loss/regular/')
                 fig.savefig('diagrams/loss/regular/task_{}_regular_{}.png'.format(self.task_id, round(train_acc, 6)))
 
-# Function created to plot the accuracy. All the figures are saved to the corresponding subdirectory.
+    # Function created to plot the accuracy. All the figures are saved to the corresponding subdirectory.
     def plot_acc(self,test_acc): 
         length = len(test_acc)
         x = []
@@ -207,6 +174,7 @@ class chatBot(object):
                 self.create_path('diagrams/accuracy/regular/')
                 fig.savefig('diagrams/accuracy/regular/task_{}_regular_{}.png'.format(self.task_id, round(test_acc[length-1], 6)))
 
+    # Count amount of mistakes 
     def amount_mistakes(self, real, predicted):
         real = real.split(' ')
         predicted = predicted.split(' ')
@@ -214,21 +182,21 @@ class chatBot(object):
         mistake = 0
         for i  in range(len(real)):
             try:
-                if real[i] == predicted[i]:
-                    same += 1
-                else:
+                if real[i] != predicted[i]:
                     mistake += 1
             except IndexError:
                 return mistake
         return mistake
 
-    def conv_wrong(self):
+    # Print information about the dialogue with the story, predicted answer and real answer
+    def print_conv_wrong(self):
         print('real_answer: {}'.format(real))
         print('predicted answer: {}'.format(key2))
         print('story: {}'.format(story_words[i]))
         print('\n-----------------------')  
 
-    def print_mistake_info(self, fu, oam,    tam, tmam, osm, tsm, tmsm, cw, cr):
+    # Print information about the type of mistakes made by the system
+    def print_mistake_info(self, fu, oam,  tam, tmam, osm, tsm, tmsm, cw, cr):
         print('-----------------------')
         print('Wrong follow up: {}'.format(fu))
         print('One API mistake: {}'.format(oam))
@@ -242,6 +210,17 @@ class chatBot(object):
             print('Conversations wrong: {}'.format(cw))
             print('Conversations right: {}'.format(cr))
 
+    def print_epoch_info(self, total_cost, total_cost_val, train_acc, val_acc, test_acc):
+        print('Total Cost Training:', total_cost)
+        print('Total Cost Validation:', total_cost_val)
+        print('Training Accuracy:', train_acc)
+        print('Validation Accuracy:', val_acc)
+        print('\n-----------------------')  
+        print("Testing Size", n_test)
+        print('Test accuracy list:', test_acc)
+        print('\n-----------------------')
+
+    # Inspect what type of errors the system makes and how much each mistake occurs
     def error_inspect(self, test_preds, testAnswer, story_words):
         real_answer = []
         predicted_answer = []
@@ -267,7 +246,7 @@ class chatBot(object):
                             for key2, value in self.candid2indx.items():
                                 if value == test_preds[i]:
                                     if FLAGS.wrong_conversations == True:
-                                        self.conv_wrong()                               
+                                        self.print_conv_wrong()                               
                                     predicted_answer.append(key2)
                                     if 'where' or  'preference' or 'people' or 'range' in real: 
                                         if 'here' not in real:
@@ -301,11 +280,13 @@ class chatBot(object):
                             conversation_number_wrong.append(story_words[i][1])   
                 else:
                     conversation_number_right.append(story_words[i][1])                                                            
-        self.print_mistake_info(follow_up_wrong, one_api_mistake, two_api_mistakes, three_or_more_api__call_mistakes, one_answer_mistake, 
-            two_answer_mistakes, three_or_more_answer_mistakes, conversation_number_right, conversation_number_wrong)
+        self.print_mistake_info(follow_up_wrong, one_api_mistake, two_api_mistakes, three_or_more_api__call_mistakes, 
+            one_answer_mistake, two_answer_mistakes, three_or_more_answer_mistakes, conversation_number_right, conversation_number_wrong)
         return follow_up_wrong, one_api_mistake, two_api_mistakes, three_or_more_api__call_mistakes, one_answer_mistake, \
         two_answer_mistakes, three_or_more_answer_mistakes, conversation_number_right, conversation_number_wrong
 
+    # This function is adapted so it can capture error inspecting. Also this function is adapted so it is able to 
+    # handle the Source Awareness part.
     def test(self):
         ckpt = tf.train.get_checkpoint_state(self.model_dir)
         if ckpt and ckpt.model_checkpoint_path:
@@ -320,7 +301,6 @@ class chatBot(object):
             n_test = len(testStory)
             test_preds = self.batch_predict(testStory, testWholeU, testWholeS, testQuery, testResults, n_test)
 
-            # Error inspecting
             if FLAGS.error == True:
                 follow_up_wrong, one_api_mistake, two_api_mistakes, three_or_more_api__call_mistakes, one_answer_mistake, two_answer_mistakes, three_or_more_answer_mistakes, conversation_number_right, conversation_number_wrong = self.error_inspect(test_preds, testAnswer, story_words)
             
@@ -329,18 +309,10 @@ class chatBot(object):
             print("Testing Accuracy:", test_acc)
             print('----------------------\n')  
         return self.test_acc_list, follow_up_wrong, one_api_mistake, two_api_mistakes, three_or_more_api__call_mistakes, \
-        one_answer_mistake, two_answer_mistakes, three_or_more_answer_mistakes, conversation_number_right, conversation_number_wrong
+        one_answer_mistake, two_answer_mistakes, three_or_more_answer_mistakes, conversation_number_right, conversation_number_wrong  
 
-    def print_epoch_info(self, total_cost, total_cost_val, train_acc, val_acc, test_acc):
-        print('Total Cost Training:', total_cost)
-        print('Total Cost Validation:', total_cost_val)
-        print('Training Accuracy:', train_acc)
-        print('Validation Accuracy:', val_acc)
-        print('\n-----------------------')  
-        print("Testing Size", n_test)
-        print('Test accuracy list:', test_acc)
-        print('\n-----------------------')  
-
+    # This function is adapted so it can capture the training and validation loss. Also this function is adapted so it is able to 
+    # handle the Source Awareness part.
     def train(self):
         trainStory, trainQuery, trainSystem, trainAnswer, trainWholeU, trainWholeS, trainResults, _ = vectorize_data(self.trainData, 
             self.word_idx, self.sentence_size, self.batch_size, self.n_cand, self.memory_size)
@@ -404,8 +376,7 @@ class chatBot(object):
             self.plot_acc(test_acc)
         self.plot_loss(cost_array, cost_val_array, train_acc)
 
-
-    
+    # This function is adapted so it is able to use all the different dialogue parts.
     def batch_predict(self, story, whole_u, whole_s, query, results, n):
         preds = []
         for start in range(0, n, self.batch_size):
@@ -431,7 +402,6 @@ if __name__ == '__main__':
                       isInteractive=FLAGS.interactive, batch_size=FLAGS.batch_size, source=FLAGS.source, epochs=FLAGS.epochs, 
                       resFlag=FLAGS.resFlag, wrong_conversations=FLAGS.wrong_conversations, error=FLAGS.error, 
                       acc_each_epoch=FLAGS.acc_each_epoch, acc_ten_epoch=FLAGS.acc_ten_epoch, conv_wrong_right=FLAGS.conv_wrong_right)
-    # chatbot.run()
     if FLAGS.train == True:
         chatbot.train()
     else:
