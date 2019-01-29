@@ -7,21 +7,21 @@ Implementation of [Source Awareness Memory End-to-End for Task-oriented Dialogue
 
 * tensorflow
 * scikit-learn
-* six
+* six 
 * scipy
 * matplotlib
 
 
-### Install and Run
+### Install and run
 ```
 pip install -r requirements.txt
 python single_dialog.py
 ```
 ### Flags
-```
+
 This system has several flags to give as argument to the model. All the flags not speaking for itself are
 discussed here: 
-```
+
 * OOV -> If this flag is used, the Out Of Vocabulary Knowledge Base is used
 * source -> If this flag is used, Source Awareness will be used, otherwise the regular MemN2N
 * wrong conversations -> All the conversations with wrong answers are outputted when using this flag
@@ -60,8 +60,6 @@ python single_dialog.py --train False --task_id 1 --source True --error True --
 ```
 ### Results
 
-Unless specified, the Adam optimizer was used.
-
 The following params were used:
 * epochs: 200
 * learning_rate: 0.01
@@ -69,14 +67,21 @@ The following params were used:
 * embedding_size: 20
 
 
-Task  |  Training Accuracy  |  Validation Accuracy  |  Test Accuracy	 
-------|---------------------|-----------------------|--------------------
-1     |  99.9	            |  99.1		            |  99.3				 
-2     |  100                |  100		            |  99.9				 
-3     |  96.1               |  71.0		            |  71.1				 
-4     |  99.9               |  56.7		            |  57.2				 
-5     |  99.9               |  98.4		            |  98.5				 
-6     |  73.1               |  49.3		            |  40.6				 
+Task  |  MemN2N   |  SMemN2N  
+------|-----------|----------
+1     |  99.90    |  99.1		            				 
+2     |  100.00   |  100		            				 
+3     |  74.90    |  71.0		            				 
+4     |  59.50    |  56.7		            				 
+5     |  96.10    |  98.4		            		
+------|-----------|----------
+1 OOV |  78.86    |  79.55		            				 
+2 OOV |  74.67    |  78.87		            				 
+3 OOV |  75.20    |  72.33		            				 
+4 OOV |  56.98    |  56.98		            				 
+5 OOV |  64.29    |  60.41		            				 
+------|-----------|----------
+6     |  40.60    |  65.78
 
 ### Authors
 
