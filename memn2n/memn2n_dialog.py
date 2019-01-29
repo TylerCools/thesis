@@ -128,7 +128,6 @@ class MemN2NDialog(object):
         grads_and_vars = self._opt.compute_gradients(loss_op)
         grads_and_vars = [(tf.clip_by_norm(g, self._max_grad_norm), v)
                           for g, v in grads_and_vars]
-        # grads_and_vars = [(add_gradient_noise(g), v) for g,v in grads_and_vars]
         nil_grads_and_vars = []
         for g, v in grads_and_vars:
             if v.name in self._nil_vars:
@@ -161,7 +160,7 @@ class MemN2NDialog(object):
         self._sess.run(init_op)
 
 
-    def _build_inputs(self):
+    def _build_inputs(self):  
         # A function to create the placeholders. 
         self._stories = tf.placeholder(tf.int32, [None, None, self._sentence_size], name="story")
         self._whole_user = tf.placeholder(tf.int32, [None, None, self._sentence_size], name="whole_user")
@@ -214,7 +213,6 @@ class MemN2NDialog(object):
                     o_k = tf.reduce_sum(c_temp * probs_temp, 2)
 
                 u_k = tf.matmul(u[-1], self.H) + o_k
-                # u_k=u[-1]+tf.matmul(o_k,self.H)
                 
                 # nonlinearity
                 if self._nonlin:
@@ -252,7 +250,8 @@ class MemN2NDialog(object):
             feed_dict = {self._stories: story, self._queries: query, self._answers: answer}
             loss, _ = self._sess.run([self.loss_op, self.train_op], feed_dict=feed_dict)
         return loss
-
+    
+    # This function is adapted to be able to handle Source Awarenes.
     def predict(self, story, whole_user, whole_system, query, results, source, result_flag):
         """Predicts answers as one-hot encoding.
 
@@ -269,10 +268,8 @@ class MemN2NDialog(object):
                 else:
                     feed_dict = {self._whole_user: whole_user, self._whole_system:whole_system, self._queries: query, self._results_full:results}                
             else:
-                # print("result_flag")
                 feed_dict = {self._whole_user: whole_user, self._whole_system:whole_system, self._queries: query}                
         else:
-            # print('else2: {}'.format(source))
             feed_dict = {self._stories: story, self._queries: query}
 
         return self._sess.run(self.predicted_ans, feed_dict=feed_dict)
