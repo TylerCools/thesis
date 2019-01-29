@@ -13,6 +13,11 @@ Implementation of [Source Awareness Memory End-to-End for Task-oriented Dialogue
 
 
 ### Install and run
+First unpack the zipped data
+```
+unzip data.zip
+```
+Then install all the requirements. This is only neccesery if you don't already have the used packages
 ```
 pip install -r requirements.txt
 python single_dialog.py
