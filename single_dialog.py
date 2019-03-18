@@ -41,12 +41,11 @@ FLAGS = tf.flags.FLAGS
 
 class chatBot(object):
     def __init__(self, data_dir, model_dir, task_id, source, resFlag, wrong_conversations, error, acc_each_epoch, acc_ten_epoch, 
-        conv_wrong_right, epochs, isInteractive=True, OOV=False,  memory_size=50, random_state=None, batch_size=32, learning_rate=0.001, 
+        conv_wrong_right, epochs, OOV=False,  memory_size=50, random_state=None, batch_size=32, learning_rate=0.001, 
         epsilon=1e-8, max_grad_norm=40.0, evaluation_interval=10, hops=3, embedding_size=20):
         self.data_dir = data_dir
         self.task_id = task_id
         self.model_dir = model_dir
-        self.isInteractive = isInteractive
         self.OOV = OOV
         self.memory_size = memory_size
         self.random_state = random_state
@@ -189,10 +188,10 @@ class chatBot(object):
         return mistake
 
     # Print information about the dialogue with the story, predicted answer and real answer
-    def print_conv_wrong(self):
+    def print_conv_wrong(self, real, key2, story_words):
         print('real_answer: {}'.format(real))
         print('predicted answer: {}'.format(key2))
-        print('story: {}'.format(story_words[i]))
+        print('story: {}'.format(story_words))
         print('\n-----------------------')  
 
     # Print information about the type of mistakes made by the system
@@ -246,7 +245,7 @@ class chatBot(object):
                             for key2, value in self.candid2indx.items():
                                 if value == test_preds[i]:
                                     if FLAGS.wrong_conversations == True:
-                                        self.print_conv_wrong()                               
+                                        self.print_conv_wrong(real, key2, story_words[i])                               
                                     predicted_answer.append(key2)
                                     if 'where' or  'preference' or 'people' or 'range' in real: 
                                         if 'here' not in real:
@@ -293,23 +292,21 @@ class chatBot(object):
             self.saver.restore(self.sess, ckpt.model_checkpoint_path)
         else:
             print("...no checkpoint found...")
-        if self.isInteractive:
-            self.interactive()
-        else:
-            testStory, testQuery, testSystem, testAnswer, testWholeU, testWholeS, testResults, story_words = vectorize_data(self.testData, 
-                self.word_idx, self.sentence_size, self.batch_size, self.n_cand, self.memory_size)
-            n_test = len(testStory)
-            test_preds = self.batch_predict(testStory, testWholeU, testWholeS, testQuery, testResults, n_test)
+        testStory, testQuery, testSystem, testAnswer, testWholeU, testWholeS, testResults, story_words = vectorize_data(self.testData, 
+            self.word_idx, self.sentence_size, self.batch_size, self.n_cand, self.memory_size)
+        n_test = len(testStory)
+        test_preds = self.batch_predict(testStory, testWholeU, testWholeS, testQuery, testResults, n_test)
 
-            if FLAGS.error == True:
-                follow_up_wrong, one_api_mistake, two_api_mistakes, three_or_more_api__call_mistakes, one_answer_mistake, two_answer_mistakes, three_or_more_answer_mistakes, conversation_number_right, conversation_number_wrong = self.error_inspect(test_preds, testAnswer, story_words)
-            
-            test_acc = metrics.accuracy_score(test_preds, testAnswer)
-            self.test_acc_list.append(test_acc)
-            print("Testing Accuracy:", test_acc)
-            print('----------------------\n')  
-        return self.test_acc_list, follow_up_wrong, one_api_mistake, two_api_mistakes, three_or_more_api__call_mistakes, \
-        one_answer_mistake, two_answer_mistakes, three_or_more_answer_mistakes, conversation_number_right, conversation_number_wrong  
+        if FLAGS.error == True:
+            follow_up_wrong, one_api_mistake, two_api_mistakes, three_or_more_api__call_mistakes, one_answer_mistake, two_answer_mistakes, three_or_more_answer_mistakes, conversation_number_right, conversation_number_wrong = self.error_inspect(test_preds, testAnswer, story_words)
+        
+        test_acc = metrics.accuracy_score(test_preds, testAnswer)
+        self.test_acc_list.append(test_acc)
+        print("Testing Accuracy:", test_acc)
+        print('----------------------\n')  
+        if FLAGS.error == True:
+            return self.test_acc_list, follow_up_wrong, one_api_mistake, two_api_mistakes, three_or_more_api__call_mistakes, \
+            one_answer_mistake, two_answer_mistakes, three_or_more_answer_mistakes, conversation_number_right, conversation_number_wrong  
 
     # This function is adapted so it can capture the training and validation loss. Also this function is adapted so it is able to 
     # handle the Source Awareness part.
@@ -399,7 +396,7 @@ if __name__ == '__main__':
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
     chatbot = chatBot(FLAGS.data_dir, model_dir, FLAGS.task_id, OOV=FLAGS.OOV,
-                      isInteractive=FLAGS.interactive, batch_size=FLAGS.batch_size, source=FLAGS.source, epochs=FLAGS.epochs, 
+                      batch_size=FLAGS.batch_size, source=FLAGS.source, epochs=FLAGS.epochs, 
                       resFlag=FLAGS.resFlag, wrong_conversations=FLAGS.wrong_conversations, error=FLAGS.error, 
                       acc_each_epoch=FLAGS.acc_each_epoch, acc_ten_epoch=FLAGS.acc_ten_epoch, conv_wrong_right=FLAGS.conv_wrong_right)
     if FLAGS.train == True:
